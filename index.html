@@ -55,30 +55,56 @@ body{
 let closes = [];
 let lastPrice = 0;
 
-// 🔥 ЗАГРУЗКА РЕАЛЬНЫХ СВЕЧЕЙ 15m
-async function loadKlines(){
+//
+// 🔥 ЖИВАЯ ЦЕНА (каждые 3 сек)
+//
+async function loadPrice(){
 
-  const r = await fetch(
-    "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=300"
-  );
+  try{
+    const r = await fetch(
+      "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT",
+      {cache:"no-store"}
+    );
 
-  const data = await r.json();
+    const data = await r.json();
+    const p = parseFloat(data.result.list[0].lastPrice);
 
-  const list = data.result.list.reverse();
+    if(!isNaN(p) && p > 0){
+      lastPrice = p;
+      document.getElementById("price").textContent = p.toFixed(2);
+    }
 
-  closes = list.map(c => parseFloat(c[4])); // close price
-
-  lastPrice = closes.at(-1);
-
-  document.getElementById("price").textContent =
-    lastPrice.toFixed(2);
-
-  analyze();
+  }catch(e){
+    console.log("Price API fail");
+  }
 }
 
-// 🔥 EMA
-function EMA(period){
+//
+// 🔥 РЕАЛЬНЫЕ СВЕЧИ 15m
+//
+async function loadKlines(){
 
+  try{
+    const r = await fetch(
+      "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=300"
+    );
+
+    const data = await r.json();
+    const list = data.result.list.reverse();
+
+    closes = list.map(c => parseFloat(c[4]));
+
+    analyze();
+
+  }catch(e){
+    console.log("Kline API fail");
+  }
+}
+
+//
+// 🔥 EMA
+//
+function EMA(period){
   let k = 2/(period+1);
   let ema = closes[0];
 
@@ -88,9 +114,14 @@ function EMA(period){
   return ema;
 }
 
+//
+// 🔥 АНАЛИЗ
+//
 function analyze(){
 
-  const price = closes.at(-1);
+  if(closes.length < 210) return;
+
+  const price = lastPrice || closes.at(-1);
 
   const e20 = EMA(20);
   const e50 = EMA(50);
@@ -175,8 +206,16 @@ function analyze(){
   s.className = cls;
 }
 
-// 🔥 Обновляем раз в минуту (новая свеча 15m не чаще)
+//
+// 🔥 СТАРТ
+//
+loadPrice();
 loadKlines();
+
+// живая цена
+setInterval(loadPrice, 3000);
+
+// обновление свечей
 setInterval(loadKlines, 60000);
 
 </script>
