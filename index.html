@@ -38,7 +38,7 @@ body{
 
 <h1>💼 BYBIT HEDGE SCALP TERMINAL</h1>
 
-<div id="price" class="price">WAIT</div>
+<div id="price" class="price">LOADING</div>
 
 <div class="box">
   Signal: <b id="signal" class="wait">WAIT</b><br><br>
@@ -52,99 +52,91 @@ body{
 </div>
 
 <script>
-let prices = [];
+let closes = [];
 let lastPrice = 0;
 
-async function update(){
+// 🔥 ЗАГРУЗКА РЕАЛЬНЫХ СВЕЧЕЙ 15m
+async function loadKlines(){
 
-  try{
-    const r = await fetch(
-      "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT"
-    );
+  const r = await fetch(
+    "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=300"
+  );
 
-    const data = await r.json();
+  const data = await r.json();
 
-    const p = parseFloat(data.result.list[0].lastPrice);
+  const list = data.result.list.reverse();
 
-    if(!isNaN(p) && p > 0){
-      lastPrice = p;
-      prices.push(p);
-      if(prices.length > 300) prices.shift();
-    }
+  closes = list.map(c => parseFloat(c[4])); // close price
 
-  }catch(e){}
+  lastPrice = closes.at(-1);
 
   document.getElementById("price").textContent =
-    lastPrice ? lastPrice.toFixed(2) : "WAIT";
+    lastPrice.toFixed(2);
 
   analyze();
 }
 
+// 🔥 EMA
 function EMA(period){
-  if(prices.length < period) return null;
 
   let k = 2/(period+1);
-  let ema = prices[0];
+  let ema = closes[0];
 
-  for(let i=1;i<prices.length;i++){
-    ema = prices[i]*k + ema*(1-k);
+  for(let i=1;i<closes.length;i++){
+    ema = closes[i]*k + ema*(1-k);
   }
   return ema;
 }
 
 function analyze(){
 
-  if(prices.length < 210) return;
-
-  const price = prices.at(-1);
+  const price = closes.at(-1);
 
   const e20 = EMA(20);
   const e50 = EMA(50);
   const e200 = EMA(200);
 
-  const momentum = price - prices.at(-6);
+  const momentum = price - closes.at(-5);
 
-  const recent = prices.slice(-40);
+  const recent = closes.slice(-30);
   const max = Math.max(...recent);
   const min = Math.min(...recent);
 
   const volatility = ((max-min)/min*100);
+
   document.getElementById("vol").textContent =
     volatility.toFixed(2)+"%";
 
-  let trend = "SIDE";
-  let signal = "WAIT";
-  let cls = "wait";
+  let trend="SIDE";
+  let signal="WAIT";
+  let cls="wait";
   let tp="--", sl="--", rr="--";
-  let prob=50;
   let risk="MEDIUM";
 
   const majorUp = price > e200;
 
-  // сила тренда
   const trendStrength =
     Math.abs(e20-e50)/price*100;
 
-  // сила импульса
   const momentumStrength =
     Math.abs(momentum)/price*100;
 
-  prob =
+  let prob =
     trendStrength*200 +
     momentumStrength*400 +
     volatility*10;
 
   prob = Math.min(95, Math.round(prob));
 
-  // LONG
-  if(e20>e50 && momentum>15 && volatility>0.2 && majorUp){
+  // 🔥 LONG
+  if(e20>e50 && momentum>0 && volatility>0.25 && majorUp){
 
     trend="UP";
     signal="LONG";
     cls="long";
 
-    const tpVal = price * 1.003;
-    const slVal = price * 0.998;
+    const tpVal = price * 1.004;
+    const slVal = price * 0.997;
 
     tp = tpVal.toFixed(2);
     sl = slVal.toFixed(2);
@@ -152,15 +144,15 @@ function analyze(){
     rr = ((tpVal-price)/(price-slVal)).toFixed(2);
   }
 
-  // SHORT
-  else if(e20<e50 && momentum<-15 && volatility>0.2 && !majorUp){
+  // 🔥 SHORT
+  else if(e20<e50 && momentum<0 && volatility>0.25 && !majorUp){
 
     trend="DOWN";
     signal="SHORT";
     cls="short";
 
-    const tpVal = price * 0.997;
-    const slVal = price * 1.002;
+    const tpVal = price * 0.996;
+    const slVal = price * 1.003;
 
     tp = tpVal.toFixed(2);
     sl = slVal.toFixed(2);
@@ -168,9 +160,8 @@ function analyze(){
     rr = ((price-tpVal)/(slVal-price)).toFixed(2);
   }
 
-  // риск
-  if(volatility > 0.6) risk="HIGH";
-  else if(volatility < 0.25) risk="LOW";
+  if(volatility > 0.8) risk="HIGH";
+  else if(volatility < 0.3) risk="LOW";
 
   document.getElementById("trend").textContent = trend;
   document.getElementById("prob").textContent = prob+"%";
@@ -184,8 +175,10 @@ function analyze(){
   s.className = cls;
 }
 
-update();
-setInterval(update, 2000);
+// 🔥 Обновляем раз в минуту (новая свеча 15m не чаще)
+loadKlines();
+setInterval(loadKlines, 60000);
+
 </script>
 
 </body>
