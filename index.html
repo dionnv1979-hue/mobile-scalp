@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>⚡ BYBIT SCALP TERMINAL 15m</title>
+<title>💼 BYBIT HEDGE SCALP TERMINAL</title>
 
 <style>
 body{
@@ -25,26 +25,37 @@ body{
   padding:25px;
   border-radius:20px;
   margin-top:20px;
+  font-size:20px;
 }
+
+.long{color:#4ade80;font-weight:bold}
+.short{color:#f87171;font-weight:bold}
+.wait{color:#facc15;font-weight:bold}
 </style>
 </head>
 
 <body>
 
-<h1>⚡ BYBIT SCALP TERMINAL 15m</h1>
+<h1>💼 BYBIT HEDGE SCALP TERMINAL</h1>
 
 <div id="price" class="price">WAIT</div>
 
 <div class="box">
-  Signal: <b id="signal">WAIT</b><br><br>
+  Signal: <b id="signal" class="wait">WAIT</b><br><br>
   Trend: <b id="trend">SIDE</b><br>
-  Volatility: <b id="vol">--</b>
+  Volatility: <b id="vol">--</b><br>
+  Strength: <b id="prob">--</b><br>
+  Risk: <b id="risk">--</b><br><br>
+  TP: <b id="tp">--</b><br>
+  SL: <b id="sl">--</b><br>
+  RR: <b id="rr">--</b>
 </div>
 
 <script>
+let prices = [];
 let lastPrice = 0;
 
-async function updatePrice(){
+async function update(){
 
   try{
     const r = await fetch(
@@ -55,25 +66,126 @@ async function updatePrice(){
 
     const p = parseFloat(data.result.list[0].lastPrice);
 
-    // 🔥 ЗАЩИТА ОТ NaN
     if(!isNaN(p) && p > 0){
       lastPrice = p;
+      prices.push(p);
+      if(prices.length > 300) prices.shift();
     }
 
-    document.getElementById("price").textContent =
-      lastPrice ? lastPrice.toFixed(2) : "WAIT";
+  }catch(e){}
 
-  }catch(e){
-    console.log("API error — using last price");
-  }
+  document.getElementById("price").textContent =
+    lastPrice ? lastPrice.toFixed(2) : "WAIT";
 
+  analyze();
 }
 
-// старт сразу
-updatePrice();
+function EMA(period){
+  if(prices.length < period) return null;
 
-// обновление каждые 2 сек
-setInterval(updatePrice, 2000);
+  let k = 2/(period+1);
+  let ema = prices[0];
+
+  for(let i=1;i<prices.length;i++){
+    ema = prices[i]*k + ema*(1-k);
+  }
+  return ema;
+}
+
+function analyze(){
+
+  if(prices.length < 210) return;
+
+  const price = prices.at(-1);
+
+  const e20 = EMA(20);
+  const e50 = EMA(50);
+  const e200 = EMA(200);
+
+  const momentum = price - prices.at(-6);
+
+  const recent = prices.slice(-40);
+  const max = Math.max(...recent);
+  const min = Math.min(...recent);
+
+  const volatility = ((max-min)/min*100);
+  document.getElementById("vol").textContent =
+    volatility.toFixed(2)+"%";
+
+  let trend = "SIDE";
+  let signal = "WAIT";
+  let cls = "wait";
+  let tp="--", sl="--", rr="--";
+  let prob=50;
+  let risk="MEDIUM";
+
+  const majorUp = price > e200;
+
+  // сила тренда
+  const trendStrength =
+    Math.abs(e20-e50)/price*100;
+
+  // сила импульса
+  const momentumStrength =
+    Math.abs(momentum)/price*100;
+
+  prob =
+    trendStrength*200 +
+    momentumStrength*400 +
+    volatility*10;
+
+  prob = Math.min(95, Math.round(prob));
+
+  // LONG
+  if(e20>e50 && momentum>15 && volatility>0.2 && majorUp){
+
+    trend="UP";
+    signal="LONG";
+    cls="long";
+
+    const tpVal = price * 1.003;
+    const slVal = price * 0.998;
+
+    tp = tpVal.toFixed(2);
+    sl = slVal.toFixed(2);
+
+    rr = ((tpVal-price)/(price-slVal)).toFixed(2);
+  }
+
+  // SHORT
+  else if(e20<e50 && momentum<-15 && volatility>0.2 && !majorUp){
+
+    trend="DOWN";
+    signal="SHORT";
+    cls="short";
+
+    const tpVal = price * 0.997;
+    const slVal = price * 1.002;
+
+    tp = tpVal.toFixed(2);
+    sl = slVal.toFixed(2);
+
+    rr = ((price-tpVal)/(slVal-price)).toFixed(2);
+  }
+
+  // риск
+  if(volatility > 0.6) risk="HIGH";
+  else if(volatility < 0.25) risk="LOW";
+
+  document.getElementById("trend").textContent = trend;
+  document.getElementById("prob").textContent = prob+"%";
+  document.getElementById("risk").textContent = risk;
+  document.getElementById("tp").textContent = tp;
+  document.getElementById("sl").textContent = sl;
+  document.getElementById("rr").textContent = rr;
+
+  const s = document.getElementById("signal");
+  s.textContent = signal;
+  s.className = cls;
+}
+
+update();
+setInterval(update, 2000);
 </script>
 
 </body>
