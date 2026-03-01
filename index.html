@@ -2,162 +2,123 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>MOBILE SCALP TERMINAL 💀</title>
-
-<script src="https://unpkg.com/@ixjb94/indicators@latest/dist/browser-indicators-sync.js"></script>
+<title>BYBIT MOBILE SCALP ⚡</title>
 
 <style>
 body{
-margin:0;
-background:#020617;
-color:#e5e7eb;
-font-family:Arial;
-text-align:center;
-padding:20px;
+  margin:0;
+  background:#020617;
+  color:#e5e7eb;
+  font-family:Arial;
+  text-align:center;
+  padding:20px;
 }
 
 .good{color:#4ade80}
 .bad{color:#f87171}
 .warn{color:#facc15}
 
-.big{
-font-size:44px;
-font-weight:bold;
-margin-top:20px;
+.price{
+  font-size:46px;
+  font-weight:bold;
+  margin:20px 0;
 }
 
-.card{
-margin-top:20px;
-background:#111827;
-padding:18px;
-border-radius:10px;
-font-size:18px;
+.panel{
+  background:#0f172a;
+  padding:18px;
+  border-radius:14px;
+  margin-top:20px;
+  font-size:20px;
 }
 </style>
 </head>
 
 <body>
 
-<h2>💀 MOBILE SCALP TERMINAL 15m</h2>
+<h1>⚡ BYBIT SCALP TERMINAL 15m</h1>
 
-<div id="status" class="warn">INIT...</div>
+<div class="price" id="price">CONNECT...</div>
 
-<div id="signal" class="big warn">WAIT</div>
-
-<div id="info" class="card">
-Загрузка данных...
+<div class="panel">
+Signal: <span id="signal" class="warn">WAIT</span><br><br>
+Trend: <span id="trend">—</span><br>
+Volatility: <span id="vol">—</span>
 </div>
 
-<audio id="beep">
-<source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg">
-</audio>
-
 <script>
+const priceEl = document.getElementById("price");
+const signalEl = document.getElementById("signal");
+const trendEl = document.getElementById("trend");
+const volEl = document.getElementById("vol");
 
-const SYMBOL="BTCUSDT"
-const TF="15"
-const ta=new indicators.IndicatorsSync()
+let prices = [];
 
-let lastSignalTime=0
+const ws = new WebSocket("wss://stream.bybit.com/v5/public/linear");
 
-async function update(){
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    op: "subscribe",
+    args: ["tickers.BTCUSDT"]
+  }));
+};
 
-status.textContent="Загрузка..."
+ws.onmessage = (msg) => {
+  const data = JSON.parse(msg.data);
 
-try{
+  if(data.topic === "tickers.BTCUSDT"){
+    const p = parseFloat(data.data.lastPrice);
+    priceEl.textContent = p.toFixed(2);
 
-const url=`https://api.bybit.com/v5/market/kline?category=linear&symbol=${SYMBOL}&interval=${TF}&limit=200`
+    prices.push(p);
+    if(prices.length > 60) prices.shift();
 
-const r=await fetch(url)
-const j=await r.json()
+    analyze();
+  }
+};
 
-const candles=j.result.list.reverse()
+function analyze(){
 
-const close=candles.map(k=>+k[4])
-const high=candles.map(k=>+k[2])
-const low=candles.map(k=>+k[3])
-const vol=candles.map(k=>+k[5])
+  if(prices.length < 30){
+    signalEl.textContent = "WAIT";
+    signalEl.className = "warn";
+    return;
+  }
 
-const e20=ta.ema(close,20)
-const e50=ta.ema(close,50)
-const e200=ta.ema(close,200)
-const rsi=ta.rsi(close,14)
-const atr=ta.atr(high,low,close,14)
-const adx=ta.adx(high,low,close,14)
-const volSma=ta.sma(vol,20)
+  const recent = prices.slice(-10);
+  const old = prices.slice(-30, -20);
 
-const i=close.length-1
+  const avgRecent = avg(recent);
+  const avgOld = avg(old);
 
-const price=close[i]
-const ad=adx.adx[i]
-const a=atr[i]
+  const change = (avgRecent - avgOld) / avgOld * 100;
 
-if(!a||!ad) return
+  const vol = Math.abs(change).toFixed(2);
+  volEl.textContent = vol + "%";
 
-const majorUp = price > e200[i]
-const trendUp = e20[i] > e50[i]
-const trendDown = e20[i] < e50[i]
-const volOK = vol[i] > volSma[i]*1.2
-
-let signal="WAIT"
-let cls="warn"
-let tp="—"
-let sl="—"
-
-if(Date.now()-lastSignalTime>90000){
-
-// LONG
-if(majorUp && trendUp && rsi[i-1]<45 && rsi[i]>45 && volOK){
-signal="LONG"
-cls="good"
-tp=Math.ceil(price + a*2)
-sl=Math.floor(price - a*1.1)
-lastSignalTime=Date.now()
-beep()
+  if(change > 0.25){
+    trendEl.textContent = "UP";
+    trendEl.className = "good";
+    signalEl.textContent = "LONG";
+    signalEl.className = "good";
+  }
+  else if(change < -0.25){
+    trendEl.textContent = "DOWN";
+    trendEl.className = "bad";
+    signalEl.textContent = "SHORT";
+    signalEl.className = "bad";
+  }
+  else{
+    trendEl.textContent = "SIDE";
+    trendEl.className = "warn";
+    signalEl.textContent = "WAIT";
+    signalEl.className = "warn";
+  }
 }
 
-// SHORT
-if(!majorUp && trendDown && rsi[i-1]>55 && rsi[i]<55 && volOK){
-signal="SHORT"
-cls="bad"
-tp=Math.floor(price - a*2)
-sl=Math.ceil(price + a*1.1)
-lastSignalTime=Date.now()
-beep()
+function avg(arr){
+  return arr.reduce((a,b)=>a+b,0)/arr.length;
 }
-
-}
-
-signalEl.textContent=signal
-signalEl.className="big "+cls
-
-info.innerHTML=`
-Price: ${price.toFixed(1)}<br>
-Trend: ${trendUp?"UP":trendDown?"DOWN":"SIDE"}<br>
-ADX: ${ad.toFixed(1)}<br>
-ATR: ${a.toFixed(0)}<br>
-TP: ${tp}<br>
-SL: ${sl}
-`
-
-status.textContent="ONLINE"
-
-}catch(e){
-status.textContent="ERROR"
-}
-
-}
-
-function beep(){
-const a=document.getElementById("beep")
-a.currentTime=0
-a.play().catch(()=>{})
-}
-
-// запуск каждые 5 секунд
-update()
-setInterval(update,5000)
-
 </script>
 
 </body>
