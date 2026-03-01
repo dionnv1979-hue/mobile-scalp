@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>BYBIT MOBILE SCALP ⚡</title>
+<title>⚡ BYBIT SCALP TERMINAL 15m</title>
 
 <style>
 body{
@@ -11,25 +11,20 @@ body{
   color:#e5e7eb;
   font-family:Arial;
   text-align:center;
-  padding:20px;
+  padding:40px 20px;
 }
 
-.good{color:#4ade80}
-.bad{color:#f87171}
-.warn{color:#facc15}
-
 .price{
-  font-size:46px;
+  font-size:64px;
   font-weight:bold;
   margin:20px 0;
 }
 
-.panel{
+.box{
   background:#0f172a;
-  padding:18px;
-  border-radius:14px;
+  padding:25px;
+  border-radius:20px;
   margin-top:20px;
-  font-size:20px;
 }
 </style>
 </head>
@@ -38,87 +33,47 @@ body{
 
 <h1>⚡ BYBIT SCALP TERMINAL 15m</h1>
 
-<div class="price" id="price">CONNECT...</div>
+<div id="price" class="price">WAIT</div>
 
-<div class="panel">
-Signal: <span id="signal" class="warn">WAIT</span><br><br>
-Trend: <span id="trend">—</span><br>
-Volatility: <span id="vol">—</span>
+<div class="box">
+  Signal: <b id="signal">WAIT</b><br><br>
+  Trend: <b id="trend">SIDE</b><br>
+  Volatility: <b id="vol">--</b>
 </div>
 
 <script>
-const priceEl = document.getElementById("price");
-const signalEl = document.getElementById("signal");
-const trendEl = document.getElementById("trend");
-const volEl = document.getElementById("vol");
+let lastPrice = 0;
 
-let prices = [];
+async function updatePrice(){
 
-const ws = new WebSocket("wss://stream.bybit.com/v5/public/linear");
+  try{
+    const r = await fetch(
+      "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT"
+    );
 
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    op: "subscribe",
-    args: ["tickers.BTCUSDT"]
-  }));
-};
+    const data = await r.json();
 
-ws.onmessage = (msg) => {
-  const data = JSON.parse(msg.data);
+    const p = parseFloat(data.result.list[0].lastPrice);
 
-  if(data.topic === "tickers.BTCUSDT"){
-    const p = parseFloat(data.data.lastPrice);
-    priceEl.textContent = p.toFixed(2);
+    // 🔥 ЗАЩИТА ОТ NaN
+    if(!isNaN(p) && p > 0){
+      lastPrice = p;
+    }
 
-    prices.push(p);
-    if(prices.length > 60) prices.shift();
+    document.getElementById("price").textContent =
+      lastPrice ? lastPrice.toFixed(2) : "WAIT";
 
-    analyze();
-  }
-};
-
-function analyze(){
-
-  if(prices.length < 30){
-    signalEl.textContent = "WAIT";
-    signalEl.className = "warn";
-    return;
+  }catch(e){
+    console.log("API error — using last price");
   }
 
-  const recent = prices.slice(-10);
-  const old = prices.slice(-30, -20);
-
-  const avgRecent = avg(recent);
-  const avgOld = avg(old);
-
-  const change = (avgRecent - avgOld) / avgOld * 100;
-
-  const vol = Math.abs(change).toFixed(2);
-  volEl.textContent = vol + "%";
-
-  if(change > 0.25){
-    trendEl.textContent = "UP";
-    trendEl.className = "good";
-    signalEl.textContent = "LONG";
-    signalEl.className = "good";
-  }
-  else if(change < -0.25){
-    trendEl.textContent = "DOWN";
-    trendEl.className = "bad";
-    signalEl.textContent = "SHORT";
-    signalEl.className = "bad";
-  }
-  else{
-    trendEl.textContent = "SIDE";
-    trendEl.className = "warn";
-    signalEl.textContent = "WAIT";
-    signalEl.className = "warn";
-  }
 }
 
-function avg(arr){
-  return arr.reduce((a,b)=>a+b,0)/arr.length;
-}
+// старт сразу
+updatePrice();
+
+// обновление каждые 2 сек
+setInterval(updatePrice, 2000);
 </script>
 
 </body>
