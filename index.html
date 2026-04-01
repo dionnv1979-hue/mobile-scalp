@@ -181,6 +181,8 @@ select:hover{border-color:var(--accent);}
   <span id="apiStatusDot"><span class="status-dot"></span></span>
   <span id="apiStatusText" style="font-weight:700;">ОЖИДАНИЕ</span>
   <span style="color:var(--border)">|</span>
+  <span id="wsIndicator"><span style="color:var(--text2);">⚫ WS: откл.</span></span>
+  <span style="color:var(--border)">|</span>
   <span id="statusText">Выберите пару и загрузите данные</span>
   <span id="candleInfo" style="margin-left:auto;"></span>
   <span id="activeEndpoint" style="color:var(--text2);font-size:10px;"></span>
@@ -323,6 +325,8 @@ let viewOffset=0, viewScale=1;
 let isDragging=false, dragStartX=0, dragStartOffset=0;
 let logLines=[], currentStrategy='trend';
 let lastEquityCurve=[], marketRegime='flat';
+let ws=null, wsReconnectTimer=null, wsConnected=false;
+let renderThrottle=null; // throttle live renders to ~10fps
 
 // ═══════════════════════════════════
 // SETTINGS
@@ -519,6 +523,7 @@ async function loadData(){
   const symbol=document.getElementById('symbolSelect').value;
   const limitVal=document.getElementById('limitSelect').value;
   currentSymbol=symbol;
+  disconnectWS(); // close old stream before fetching new data
   document.getElementById('loadingOverlay').style.display='flex';
   el('loadingText').textContent='Подключение к Bybit...';
   log(`Загрузка ${symbol} [${currentTF}]...`,'var(--accent)');
@@ -538,6 +543,7 @@ async function loadData(){
     document.getElementById('feeInfo').textContent=`Fee:0.06% Slip:0.05%`;
     log(`✅ ${candles.length} свечей загружено`,'var(--bull)');
     analyze(); render();
+    connectWS(symbol);
   }catch(e){
     const msg = friendlyError(e);
     log(msg,'var(--bear)');
@@ -1221,7 +1227,9 @@ function toggleLayer(name){
 document.querySelectorAll('.tf-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');currentTF=btn.dataset.tf;
+    btn.classList.add('active');
+    currentTF=btn.dataset.tf;
+    disconnectWS();
     if(candles.length)loadData();
   });
 });
@@ -1233,6 +1241,169 @@ function fmtPrice(p){
 }
 function el(id){return document.getElementById(id);}
 window.addEventListener('resize',()=>{if(candles.length)render();});
+
+// ═══════════════════════════════════
+// WEBSOCKET — live candle updates
+// ═══════════════════════════════════
+const WS_URL = 'wss://stream.bybit.com/v5/public/linear';
+const WS_PING_INTERVAL = 20000; // Bybit requires ping every 20s
+let wsPingTimer = null;
+
+function connectWS(symbol) {
+  // Clear any pending reconnect
+  if(wsReconnectTimer){ clearTimeout(wsReconnectTimer); wsReconnectTimer=null; }
+
+  // Close existing connection cleanly
+  if(ws){
+    ws.onclose = null; // prevent auto-reconnect on manual close
+    try{ ws.close(); }catch(e){}
+    ws = null;
+  }
+
+  wsConnected = false;
+  updateWsStatus('connecting');
+  log(`🔌 WS подключение к ${symbol} [${currentTF}]...`, 'var(--yellow)');
+
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch(e) {
+    log(`🔴 WS не поддерживается: ${e.message}`, 'var(--bear)');
+    updateWsStatus('error');
+    return;
+  }
+
+  ws.onopen = () => {
+    wsConnected = true;
+    updateWsStatus('ok');
+    log(`✅ WS подключён — ${symbol} kline.${currentTF}`, 'var(--bull)');
+
+    // Subscribe to kline stream
+    ws.send(JSON.stringify({
+      op: 'subscribe',
+      args: [`kline.${currentTF}.${symbol}`]
+    }));
+
+    // Bybit requires periodic pings to keep connection alive
+    if(wsPingTimer) clearInterval(wsPingTimer);
+    wsPingTimer = setInterval(() => {
+      if(ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ op: 'ping' }));
+      }
+    }, WS_PING_INTERVAL);
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      // Handle pong
+      if(msg.op === 'pong') return;
+
+      // Handle subscription confirmation
+      if(msg.op === 'subscribe') {
+        if(msg.success) log(`📡 Подписка активна: ${msg.ret_msg||'OK'}`, 'var(--accent)');
+        return;
+      }
+
+      // Handle kline data
+      if(msg.topic && msg.topic.startsWith('kline.') && msg.data && msg.data.length) {
+        const k = msg.data[0];
+        const newCandle = {
+          time:   parseInt(k.start),
+          open:   parseFloat(k.open),
+          high:   parseFloat(k.high),
+          low:    parseFloat(k.low),
+          close:  parseFloat(k.close),
+          volume: parseFloat(k.volume),
+          confirm: k.confirm  // true = candle closed, false = live update
+        };
+        updateLiveCandle(newCandle);
+      }
+    } catch(e) {
+      // Silently ignore parse errors on WS messages
+    }
+  };
+
+  ws.onerror = (e) => {
+    wsConnected = false;
+    updateWsStatus('error');
+    log('⚠️ WS ошибка соединения', 'var(--yellow)');
+  };
+
+  ws.onclose = (e) => {
+    wsConnected = false;
+    if(wsPingTimer){ clearInterval(wsPingTimer); wsPingTimer=null; }
+    updateWsStatus('reconnecting');
+    const code = e.code ? ` (код ${e.code})` : '';
+    log(`🔄 WS закрыт${code} — переподключение через 2с...`, 'var(--yellow)');
+    wsReconnectTimer = setTimeout(() => {
+      if(candles.length) connectWS(currentSymbol);
+    }, 2000);
+  };
+}
+
+function disconnectWS() {
+  if(wsReconnectTimer){ clearTimeout(wsReconnectTimer); wsReconnectTimer=null; }
+  if(wsPingTimer){ clearInterval(wsPingTimer); wsPingTimer=null; }
+  if(ws){
+    ws.onclose = null;
+    try{ ws.close(1000, 'User disconnect'); }catch(e){}
+    ws = null;
+  }
+  wsConnected = false;
+  updateWsStatus('off');
+}
+
+function updateLiveCandle(candle) {
+  if(!candles.length) return;
+
+  const last = candles[candles.length - 1];
+
+  if(last.time === candle.time) {
+    // Update the current live candle in-place
+    candles[candles.length - 1] = candle;
+  } else if(candle.time > last.time) {
+    // New candle started — push and trim to keep array size stable
+    candles.push(candle);
+    if(candles.length > 3100) candles.shift();
+
+    // Log closed candle signal
+    if(candle.confirm) {
+      log(`🕯 Новая свеча ${currentSymbol}: ${fmtPrice(candle.close)} ${candle.close>=candle.open?'▲':'▼'}`, candle.close>=candle.open?'var(--bull)':'var(--bear)');
+    }
+  } else {
+    return; // stale message, ignore
+  }
+
+  // Update header price live
+  el('headerPrice').textContent = fmtPrice(candle.close);
+
+  // Throttle expensive render+analyze to max 10fps
+  if(!renderThrottle) {
+    renderThrottle = setTimeout(() => {
+      renderThrottle = null;
+      analyze();
+      render();
+    }, 100);
+  }
+}
+
+function updateWsStatus(status) {
+  // status: 'connecting' | 'ok' | 'error' | 'reconnecting' | 'off'
+  const statusEl = el('statusText');
+  const wsIndicator = el('wsIndicator');
+  if(!wsIndicator) return;
+
+  const configs = {
+    connecting:  { dot:'🟡', text:'WS: подключение...', color:'var(--yellow)' },
+    ok:          { dot:'🟢', text:'WS: LIVE',           color:'var(--bull)'   },
+    error:       { dot:'🔴', text:'WS: ошибка',         color:'var(--bear)'   },
+    reconnecting:{ dot:'🟡', text:'WS: переподключение',color:'var(--yellow)' },
+    off:         { dot:'⚫', text:'WS: откл.',           color:'var(--text2)'  },
+  };
+  const cfg = configs[status] || configs.off;
+  wsIndicator.innerHTML = `<span style="color:${cfg.color};font-weight:700;">${cfg.dot} ${cfg.text}</span>`;
+}
 
 // ═══════════════════════════════════
 // INIT
