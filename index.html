@@ -1106,18 +1106,34 @@ function render(){
     });
   }
 
-  // Candles
+  // Candles — TradingView style: clean colors, no transparency
+  const BULL_COLOR = '#22c55e';
+  const BEAR_COLOR = '#ef4444';
   for(let i=startIdx;i<endIdx;i++){
     const c=candles[i],x=xi(i);
     const isBull=c.close>=c.open;
-    const bt=py(Math.max(c.open,c.close)),bb2=py(Math.min(c.open,c.close));
+    const col=isBull?BULL_COLOR:BEAR_COLOR;
+    const bt=py(Math.max(c.open,c.close));
+    const bb2=py(Math.min(c.open,c.close));
     const bh=Math.max(1,bb2-bt);
-    const col=isBull?'#00f5a0':'#ff3860';
-    ctx.strokeStyle=col;ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(x,py(c.high));ctx.lineTo(x,py(c.low));ctx.stroke();
-    ctx.fillStyle=isBull?'rgba(0,245,160,0.8)':'rgba(255,56,96,0.8)';
-    if(cw>3){ctx.fillRect(x-cw/2,bt,cw,bh);ctx.strokeStyle=col;ctx.lineWidth=0.4;ctx.strokeRect(x-cw/2,bt,cw,bh);}
-    else ctx.fillRect(x-0.5,bt,1,bh);
+
+    // Wick — draw first so body paints over the middle
+    ctx.strokeStyle=col;
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(x,py(c.high));
+    ctx.lineTo(x,py(c.low));
+    ctx.stroke();
+
+    // Body
+    ctx.fillStyle=col;
+    ctx.strokeStyle=col;
+    ctx.lineWidth=1.2;
+    if(cw>2){
+      ctx.fillRect(x-cw/2,bt,cw,bh);
+    } else {
+      ctx.fillRect(x-1,bt,2,bh);
+    }
 
     // Live candle highlight — glowing cyan border on last candle
     if(i===candles.length-1 && wsConnected){
@@ -1217,7 +1233,7 @@ function setupChartInteraction(){
   const canvas=el('mainCanvas');
   canvas.addEventListener('wheel',e=>{
     e.preventDefault();
-    viewScale=Math.max(0.05,Math.min(15,viewScale*(e.deltaY>0?0.88:1.14)));
+    viewScale=Math.max(0.05,Math.min(15,viewScale*(e.deltaY>0?0.95:1.05)));
     render();
   },{passive:false});
   canvas.addEventListener('mousedown',e=>{
@@ -1231,7 +1247,7 @@ function setupChartInteraction(){
     if(isDragging){
       const cw=Math.max(1.5,Math.min(20,el('canvasWrap').clientWidth/(candles.length*viewScale)));
       const s=cw+Math.max(0.4,cw*0.15);
-      viewOffset=Math.max(0,Math.min(candles.length-20,dragStartOffset-(e.clientX-dragStartX)/s));
+      viewOffset=Math.max(0,Math.min(candles.length-50,dragStartOffset-(e.clientX-dragStartX)/s));
       render();
     }
     if(candles.length&&window._chartState){
@@ -1436,7 +1452,7 @@ function updateLiveCandle(candle) {
   }
 
   // Auto-scroll to follow latest candle (only when user isn't dragging)
-  if(isAutoScroll) {
+  if(isAutoScroll && !isDragging) {
     viewOffset = Math.max(0, candles.length - 120);
   }
 
