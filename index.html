@@ -1115,6 +1115,18 @@ function render(){
     ctx.fillStyle=isBull?'rgba(0,245,160,0.8)':'rgba(255,56,96,0.8)';
     if(cw>3){ctx.fillRect(x-cw/2,bt,cw,bh);ctx.strokeStyle=col;ctx.lineWidth=0.4;ctx.strokeRect(x-cw/2,bt,cw,bh);}
     else ctx.fillRect(x-0.5,bt,1,bh);
+
+    // Live candle highlight — glowing cyan border on last candle
+    if(i===candles.length-1 && wsConnected){
+      ctx.save();
+      ctx.shadowColor='#00f5ff';
+      ctx.shadowBlur=cw>3?10:4;
+      ctx.strokeStyle='#00f5ff';
+      ctx.lineWidth=cw>3?1.5:1;
+      if(cw>3) ctx.strokeRect(x-cw/2-1,bt-1,cw+2,bh+2);
+      else { ctx.beginPath();ctx.moveTo(x,py(c.high));ctx.lineTo(x,py(c.low));ctx.stroke(); }
+      ctx.restore();
+    }
   }
 
   // EMA cross signals
@@ -1162,6 +1174,31 @@ function render(){
   if(layers.ma){ctx.fillStyle='#ffd60a';ctx.fillText('▬ EMA20',6,chartH-22);ctx.fillStyle='#ff6b00';ctx.fillText('▬ EMA50',70,chartH-22);}
   if(layers.ema200){ctx.fillStyle='rgba(160,80,255,0.9)';ctx.fillText('▬ EMA200',134,chartH-22);}
   if(layers.bb){ctx.fillStyle='rgba(0,102,255,0.8)';ctx.fillText('▬ BB',208,chartH-22);}
+
+  // ── Current price line ───────────────────────────────
+  const lastPrice=candles[candles.length-1].close;
+  const lastIsUp=candles[candles.length-1].close>=candles[candles.length-1].open;
+  const priceLineY=py(lastPrice);
+  if(priceLineY>0&&priceLineY<chartH){
+    const lineCol=wsConnected?'rgba(0,245,255,0.85)':(lastIsUp?'rgba(0,245,160,0.6)':'rgba(255,56,96,0.6)');
+    ctx.save();
+    ctx.strokeStyle=lineCol;
+    ctx.lineWidth=1;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(0,priceLineY);ctx.lineTo(W-72,priceLineY);ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Price label pill on right
+    const labelTxt=fmtPrice(lastPrice);
+    const pillW=64,pillH=16,pillX=W-pillW-2,pillY=priceLineY-pillH/2;
+    ctx.fillStyle=wsConnected?'rgba(0,245,255,0.15)':(lastIsUp?'rgba(0,245,160,0.15)':'rgba(255,56,96,0.15)');
+    ctx.strokeStyle=lineCol;ctx.lineWidth=1;
+    ctx.beginPath();ctx.roundRect(pillX,pillY,pillW,pillH,3);ctx.fill();ctx.stroke();
+    ctx.fillStyle=wsConnected?'#00f5ff':(lastIsUp?'#00f5a0':'#ff3860');
+    ctx.font='bold 9px Space Mono';ctx.textAlign='center';
+    ctx.fillText(labelTxt,pillX+pillW/2,pillY+pillH-4);
+    ctx.restore();
+  }
 
   window._chartState={startIdx,endIdx,step,cw,py,chartH,xi,W,H};
 }
@@ -1415,6 +1452,9 @@ log('Выберите пару и нажмите ↻ ЗАГРУЗИТЬ','var(--
 setApiStatus('loading', '...');
 pingApi();
 render();
+
+// Auto-render fallback — catches any missed WS updates
+setInterval(()=>{ if(candles.length) render(); }, 1000);
 </script>
 </body>
 </html>
