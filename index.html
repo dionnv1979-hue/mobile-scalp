@@ -213,6 +213,8 @@ select:hover{border-color:var(--accent);}
       <canvas id="mainCanvas"></canvas>
       <div class="crosshair-info" id="crosshairInfo"></div>
       <div class="signal-overlay"><div class="signal-badge" id="signalBadge"></div></div>
+      <!-- Snap-to-end button — shown when user has scrolled away from live edge -->
+      <button id="snapBtn" onclick="snapToEnd()" style="display:none;position:absolute;bottom:60px;right:12px;background:rgba(0,245,200,0.15);border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:10px;font-weight:700;padding:5px 12px;border-radius:4px;cursor:pointer;letter-spacing:1px;z-index:10;backdrop-filter:blur(4px);">▶▶ LIVE</button>
       <div class="loading-overlay" id="loadingOverlay" style="display:none;">
         <div class="loading-spinner"></div>
         <div style="font-size:13px;color:var(--accent);">ЗАГРУЗКА ДАННЫХ</div>
@@ -327,6 +329,7 @@ let logLines=[], currentStrategy='trend';
 let lastEquityCurve=[], marketRegime='flat';
 let ws=null, wsReconnectTimer=null, wsConnected=false;
 let renderThrottle=null; // throttle live renders to ~10fps
+let isAutoScroll=true;   // true = chart follows latest candle
 
 // ═══════════════════════════════════
 // SETTINGS
@@ -532,7 +535,7 @@ async function loadData(){
       ?await fetchMaxCandles(symbol,currentTF)
       :await fetchBybitCandles(symbol,currentTF,parseInt(limitVal));
     if(!data||!data.length) throw new Error('Нет данных для этой пары/интервала');
-    candles=data; viewOffset=0; viewScale=1;
+    candles=data; viewOffset=Math.max(0,candles.length-120); viewScale=1; isAutoScroll=true;
     const last=candles[candles.length-1],first=candles[0];
     const change=((last.close-first.open)/first.open*100).toFixed(2);
     document.getElementById('headerPrice').textContent=fmtPrice(last.close);
@@ -1201,6 +1204,10 @@ function render(){
   }
 
   window._chartState={startIdx,endIdx,step,cw,py,chartH,xi,W,H};
+
+  // Show "▶▶ LIVE" button when user has scrolled away from the live edge
+  const snapBtn=el('snapBtn');
+  if(snapBtn) snapBtn.style.display=(!isAutoScroll&&candles.length)?'block':'none';
 }
 
 // ═══════════════════════════════════
@@ -1213,12 +1220,18 @@ function setupChartInteraction(){
     viewScale=Math.max(0.05,Math.min(15,viewScale*(e.deltaY>0?0.88:1.14)));
     render();
   },{passive:false});
-  canvas.addEventListener('mousedown',e=>{isDragging=true;dragStartX=e.clientX;dragStartOffset=viewOffset;canvas.style.cursor='grabbing';});
+  canvas.addEventListener('mousedown',e=>{
+    isDragging=true;
+    dragStartX=e.clientX;
+    dragStartOffset=viewOffset;
+    isAutoScroll=false;  // user took control — stop following
+    canvas.style.cursor='grabbing';
+  });
   canvas.addEventListener('mousemove',e=>{
     if(isDragging){
       const cw=Math.max(1.5,Math.min(20,el('canvasWrap').clientWidth/(candles.length*viewScale)));
       const s=cw+Math.max(0.4,cw*0.15);
-      viewOffset=Math.max(0,Math.min(candles.length-10,dragStartOffset-(e.clientX-dragStartX)/s));
+      viewOffset=Math.max(0,Math.min(candles.length-20,dragStartOffset-(e.clientX-dragStartX)/s));
       render();
     }
     if(candles.length&&window._chartState){
@@ -1242,8 +1255,17 @@ function setupChartInteraction(){
       }
     }
   });
-  canvas.addEventListener('mouseup',()=>{isDragging=false;canvas.style.cursor='crosshair';});
-  canvas.addEventListener('mouseleave',()=>{isDragging=false;canvas.style.cursor='crosshair';el('crosshairInfo').style.display='none';});
+  canvas.addEventListener('mouseup',()=>{
+    isDragging=false;
+    canvas.style.cursor='crosshair';
+    // Re-enable auto-scroll if user dragged to the right edge (within 30 candles of end)
+    if(candles.length && viewOffset >= candles.length - 150) isAutoScroll=true;
+  });
+  canvas.addEventListener('mouseleave',()=>{
+    isDragging=false;
+    canvas.style.cursor='crosshair';
+    el('crosshairInfo').style.display='none';
+  });
 }
 
 // ═══════════════════════════════════
@@ -1275,6 +1297,11 @@ function fmtPrice(p){
   if(p>10000)return p.toLocaleString('en',{minimumFractionDigits:1,maximumFractionDigits:1});
   if(p>1000)return p.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
   if(p>1)return p.toFixed(4);return p.toFixed(6);
+}
+function snapToEnd(){
+  isAutoScroll=true;
+  viewOffset=Math.max(0,candles.length-120);
+  render();
 }
 function el(id){return document.getElementById(id);}
 window.addEventListener('resize',()=>{if(candles.length)render();});
@@ -1397,19 +1424,20 @@ function updateLiveCandle(candle) {
   const last = candles[candles.length - 1];
 
   if(last.time === candle.time) {
-    // Update the current live candle in-place
     candles[candles.length - 1] = candle;
   } else if(candle.time > last.time) {
-    // New candle started — push and trim to keep array size stable
     candles.push(candle);
     if(candles.length > 3100) candles.shift();
-
-    // Log closed candle signal
     if(candle.confirm) {
       log(`🕯 Новая свеча ${currentSymbol}: ${fmtPrice(candle.close)} ${candle.close>=candle.open?'▲':'▼'}`, candle.close>=candle.open?'var(--bull)':'var(--bear)');
     }
   } else {
-    return; // stale message, ignore
+    return; // stale, ignore
+  }
+
+  // Auto-scroll to follow latest candle (only when user isn't dragging)
+  if(isAutoScroll) {
+    viewOffset = Math.max(0, candles.length - 120);
   }
 
   // Update header price live
