@@ -1274,8 +1274,6 @@ function setupChartInteraction(){
   canvas.addEventListener('mouseup',()=>{
     isDragging=false;
     canvas.style.cursor='crosshair';
-    // Re-enable auto-scroll if user dragged to the right edge (within 30 candles of end)
-    if(candles.length && viewOffset >= candles.length - 150) isAutoScroll=true;
   });
   canvas.addEventListener('mouseleave',()=>{
     isDragging=false;
@@ -1325,10 +1323,7 @@ function setupChartInteraction(){
 
   canvas.addEventListener('touchend', e=>{
     lastPinchDist = null;
-    if(e.touches.length === 0){
-      isDragging = false;
-      if(candles.length && viewOffset >= candles.length - 150) isAutoScroll = true;
-    }
+    if(e.touches.length === 0) isDragging = false;
   });
 }
 
